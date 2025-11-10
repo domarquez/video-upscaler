@@ -29,25 +29,34 @@ def process_frames(video_path: Path, frames_dir: Path):
     frame_idx = 0
 
     ret, prev = cap.read()
-    if not ret: return 0
+    if not ret:
+        return 0
     prev = apply_effects(prev)
     h, w = prev.shape[:2]
     if w <= 540:
         prev = cv2.resize(prev, (1920, int(h * 1920 / w)), interpolation=cv2.INTER_CUBIC)
+    # CONVERTIR BGR → RGB ANTES DE GUARDAR
+    prev = cv2.cvtColor(prev, cv2.COLOR_BGR2RGB)
     cv2.imwrite(str(frames_dir / f"frame_{frame_idx:08d}.jpg"), prev)
     frame_idx += 1
 
     while True:
         ret, curr = cap.read()
-        if not ret: break
+        if not ret:
+            break
         curr = apply_effects(curr)
         h, w = curr.shape[:2]
         if w <= 540:
             curr = cv2.resize(curr, (1920, int(h * 1920 / w)), interpolation=cv2.INTER_CUBIC)
+        
+        # CONVERTIR BGR → RGB
+        curr = cv2.cvtColor(curr, cv2.COLOR_BGR2RGB)
 
+        # Interpolación suave
         for i in range(1, factor):
             alpha = i / factor
             inter = cv2.addWeighted(prev, 1 - alpha, curr, alpha, 0)
+            inter = cv2.cvtColor(inter, cv2.COLOR_BGR2RGB)  # ← AQUÍ TAMBIÉN
             cv2.imwrite(str(frames_dir / f"frame_{frame_idx:08d}.jpg"), inter)
             frame_idx += 1
 
@@ -64,6 +73,7 @@ def make_video(frames_dir: Path, output_path: Path, audio_path: Path):
         "-i", str(frames_dir / "frame_%08d.jpg"),
         "-i", str(audio_path),
         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        "-pix_fmt", "yuv420p",  # ← CLAVE PARA COMPATIBILIDAD
         "-c:a", "aac", "-b:a", "128k", "-r", "30", "-shortest",
         str(output_path)
     ]
