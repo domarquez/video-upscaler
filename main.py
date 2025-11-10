@@ -6,7 +6,7 @@ from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-app = FastAPI(title="Video Upscaler Pro – FFmpeg (Fix VF)")
+app = FastAPI(title="Video Upscaler Pro – FFmpeg (Fix Upscale)")
 
 UPLOAD_DIR = Path("/tmp/uploads")
 OUTPUT_DIR = Path("/tmp/outputs")
@@ -19,12 +19,12 @@ def upscale_with_ffmpeg(input_path: Path, output_path: Path):
         "-i", str(input_path),
         "-vf", (
             "scale='min(1920,iw*min(1,(1080/ih)))':'min(1080,ih*min(1,(1920/iw)))':flags=lanczos,"
-            "boxblur=2:2,"
-            "fps=30,"
-            "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black"
+            "unsharp=5:5:0.8:3:3:0.4,"
+            "boxblur=1.5:1.5,"
+            "fps=30"
         ),
-        "-c:v", "libx264", "-crf", "18", "-preset", "medium",
-        "-c:a", "aac", "-b:a", "128k",
+        "-c:v", "libx264", "-crf", "16", "-preset", "slow",
+        "-c:a", "aac", "-b:a", "192k",
         "-pix_fmt", "yuv420p",
         str(output_path)
     ]
