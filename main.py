@@ -8,17 +8,37 @@ from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-app = FastAPI(title="Video Upscaler Pro - Railway")
+app = FastAPI(title="Video Upscaler Pro - Railway (Grok Imagine Fix)")
 
 UPLOAD_DIR = Path("/tmp/uploads")
 OUTPUT_DIR = Path("/tmp/outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+def convert_to_standard(input_path: Path, temp_path: Path):
+    """Convierte videos Grok Imagine (H.265/VP9) a H.264 estándar"""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(input_path),
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",  # SDR sin HDR
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",  # Tamaños pares
+        "-c:a", "aac",
+        "-b:a", "128k",
+        str(temp_path)
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"FFmpeg convert failed: {result.stderr}")
+    return temp_path
+
 def apply_effects(frame):
-    # Aseguramos que sea BGR antes de efectos
-    if len(frame.shape) == 2:  # Si es escala de grises
+    if len(frame.shape) == 2:
         frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+    if frame.shape[2] == 4:
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     blurred = cv2.GaussianBlur(frame, (21, 21), 3)
     blended = cv2.addWeighted(frame, 0.6, blurred, 0.4, 0)
     denoised = cv2.fastNlMeansDenoisingColored(blended, None, 5, 5, 7, 21)
@@ -26,10 +46,7 @@ def apply_effects(frame):
     return cv2.filter2D(denoised, -1, kernel)
 
 def process_frames(video_path: Path, frames_dir: Path):
-    # FORZAR LEER EN COLOR
     cap = cv2.VideoCapture(str(video_path), cv2.CAP_FFMPEG)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     factor = max(1, int(30 // fps))
     frame_idx = 0
@@ -39,18 +56,15 @@ def process_frames(video_path: Path, frames_dir: Path):
         cap.release()
         return 0
 
-    # FORZAR COLOR (BGR)
     if len(prev.shape) == 2:
         prev = cv2.cvtColor(prev, cv2.COLOR_GRAY2BGR)
-    elif prev.shape[2] == 4:
+    if prev.shape[2] == 4:
         prev = cv2.cvtColor(prev, cv2.COLOR_BGRA2BGR)
 
     prev = apply_effects(prev)
     h, w = prev.shape[:2]
     if w <= 540:
         prev = cv2.resize(prev, (1920, int(h * 1920 / w)), interpolation=cv2.INTER_CUBIC)
-
-    # Guardar en RGB para FFmpeg
     prev_rgb = cv2.cvtColor(prev, cv2.COLOR_BGR2RGB)
     cv2.imwrite(str(frames_dir / f"frame_{frame_idx:08d}.jpg"), prev_rgb)
     frame_idx += 1
@@ -60,10 +74,9 @@ def process_frames(video_path: Path, frames_dir: Path):
         if not ret:
             break
 
-        # FORZAR COLOR
         if len(curr.shape) == 2:
             curr = cv2.cvtColor(curr, cv2.COLOR_GRAY2BGR)
-        elif curr.shape[2] == 4:
+        if curr.shape[2] == 4:
             curr = cv2.cvtColor(curr, cv2.COLOR_BGRA2BGR)
 
         curr = apply_effects(curr)
@@ -73,7 +86,6 @@ def process_frames(video_path: Path, frames_dir: Path):
 
         curr_rgb = cv2.cvtColor(curr, cv2.COLOR_BGR2RGB)
 
-        # Interpolación
         for i in range(1, factor):
             alpha = i / factor
             inter = cv2.addWeighted(prev_rgb, 1 - alpha, curr_rgb, alpha, 0)
@@ -93,15 +105,10 @@ def make_video(frames_dir: Path, output_path: Path, audio_path: Path):
         "-framerate", "30",
         "-i", str(frames_dir / "frame_%08d.jpg"),
         "-i", str(audio_path),
-        "-c:v", "libx264",
-        "-crf", "18",
-        "-preset", "medium",
+        "-c:v", "libx264", "-crf", "18", "-preset", "medium",
         "-pix_fmt", "yuv420p",
         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-r", "30",
-        "-shortest",
+        "-c:a", "aac", "-b:a", "128k", "-r", "30", "-shortest",
         str(output_path)
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -110,17 +117,26 @@ def make_video(frames_dir: Path, output_path: Path, audio_path: Path):
 
 def process_video(video_path: str, task_id: str):
     orig = Path(video_path)
+    
+    # ← CLAVE: CONVERSIÓN PARA GROK IMAGINE
+    temp_video = UPLOAD_DIR / f"{task_id}_standard.mp4"
+    convert_to_standard(orig, temp_video)
+
     frames_dir = UPLOAD_DIR / f"{task_id}_frames"
     frames_dir.mkdir(exist_ok=True)
-    process_frames(orig, frames_dir)
+    process_frames(temp_video, frames_dir)
+    
     output = OUTPUT_DIR / f"{task_id}_upscaled.mp4"
-    make_video(frames_dir, output, orig)
+    make_video(frames_dir, output, temp_video)
+    
+    # Limpieza
     shutil.rmtree(frames_dir)
+    temp_video.unlink()
     shutil.move(orig, OUTPUT_DIR / f"{task_id}_orig.mp4")
 
 @app.post("/upload/")
 async def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
+    if not file.filename.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm')):
         return {"error": "Solo videos"}
     task_id = str(uuid.uuid4())
     path = UPLOAD_DIR / f"{task_id}_{file.filename}"
@@ -144,7 +160,7 @@ def download(task_id: str):
 
 @app.get("/")
 def home():
-    return {"message": "Video Upscaler Pro - Railway", "upload": "/upload/"}
+    return {"message": "Video Upscaler Pro - Railway (Grok Imagine Compatible)", "upload": "/upload/"}
 
 if __name__ == "__main__":
     import uvicorn
