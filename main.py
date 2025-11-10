@@ -6,7 +6,7 @@ from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-app = FastAPI(title="Video Upscaler Pro – FFmpeg (Aspect‑Ratio)")
+app = FastAPI(title="Video Upscaler Pro – FFmpeg (Nitidez PRO)")
 
 UPLOAD_DIR = Path("/tmp/uploads")
 OUTPUT_DIR = Path("/tmp/outputs")
@@ -16,25 +16,32 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 def upscale_with_ffmpeg(input_path: Path, output_path: Path):
     """
-    - Upscale manteniendo la proporción original
-    - Rellena con barras negras (letterbox) hasta 1920×1080
+    - Mantiene proporción original (letterbox si es necesario)
+    - Upscale a 1920x1080 con Lanczos (alta calidad)
+    - Nitidez extrema: unsharp + hqdn3d
+    - Color boost: vibrance + eq
     - Blur cinematográfico sutil
-    - 30 FPS
-    - Audio AAC 128 kbps
+    - 30 FPS suave
+    - Audio AAC 192 kbps
     """
     cmd = [
         "ffmpeg", "-y",
         "-i", str(input_path),
-        "-vf",
-        (
+        "-vf", (
             "scale='min(1920,iw*min(1,(1080/ih)))':"
             "min(1080,ih*min(1,(1920/iw)))':flags=lanczos,"
-            "boxblur=2:2,"
+            "unsharp=7:7:1.2:5:5:0.8,"        # ← Nitidez AGUDA
+            "hqdn3d=3:3:4:4,"                  # ← Denoise sin perder detalle
+            "vibrance=1.3,"                    # ← Colores más vivos
+            "eq=contrast=1.15:brightness=0.03,"# ← Contraste + brillo
+            "boxblur=1.5:1.5,"                 # ← Blur cinematográfico
             "fps=30,"
             "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black"
         ),
-        "-c:v", "libx264", "-crf", "18", "-preset", "medium",
-        "-c:a", "aac", "-b:a", "128k",
+        "-c:v", "libx264",
+        "-crf", "15",          # ← Calidad excelente
+        "-preset", "veryslow", # ← Máxima compresión eficiente
+        "-c:a", "aac", "-b:a", "192k",
         "-pix_fmt", "yuv420p",
         str(output_path)
     ]
@@ -80,7 +87,7 @@ def download(task_id: str):
 
 @app.get("/")
 def home():
-    return {"message": "Video Upscaler Pro – FFmpeg", "upload": "/upload/"}
+    return {"message": "Video Upscaler Pro – Nitidez PRO", "upload": "/upload/"}
 
 
 if __name__ == "__main__":
