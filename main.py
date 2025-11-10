@@ -6,7 +6,7 @@ from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-app = FastAPI(title="Video Upscaler Pro – FFmpeg (REAL UPSCALE)")
+app = FastAPI(title="Video Upscaler Pro – FFmpeg (REAL 1080p UPSCALE)")
 
 UPLOAD_DIR = Path("/tmp/uploads")
 OUTPUT_DIR = Path("/tmp/outputs")
@@ -18,18 +18,17 @@ def upscale_with_ffmpeg(input_path: Path, output_path: Path):
         "ffmpeg", "-y",
         "-i", str(input_path),
         "-vf", (
-            "scale='if(gt(iw,ih),min(1920,iw*min(1,(1080/ih))),min(1080,ih*min(1,(1920/iw))))':"
-            "'if(gt(iw,ih),min(1080,ih*min(1,(1920/iw))),min(1920,iw*min(1,(1080/ih))))':"
-            "flags=lanczos,"
-            "unsharp=7:7:1.2:5:5:0.8,"
-            "eq=contrast=1.15:brightness=0.02,"
-            "boxblur=1.5:1.5,"
+            "scale='if(gt(iw,1920),1920,iw*max(1,1920/iw))':"
+            "'if(gt(ih,1080),1080,ih*max(1,1080/ih))':flags=lanczos,"
+            "unsharp=9:9:1.5:7:7:1.0,"
+            "eq=contrast=1.2:brightness=0.03:gamma=1.1,"
+            "boxblur=1:1,"
             "fps=30"
         ),
         "-c:v", "libx264",
-        "-crf", "14",          # CALIDAD MUY ALTA
-        "-preset", "veryslow", # MEJOR COMPRESIÓN
-        "-c:a", "aac", "-b:a", "192k",
+        "-crf", "12",           # CALIDAD EXTREMA
+        "-preset", "veryslow",  # MÁXIMA CALIDAD
+        "-c:a", "aac", "-b:a", "256k",
         "-pix_fmt", "yuv420p",
         str(output_path)
     ]
@@ -69,7 +68,7 @@ def download(task_id: str):
 
 @app.get("/")
 def home():
-    return {"message": "Video Upscaler Pro – REAL UPSCALE", "upload": "/upload/"}
+    return {"message": "Video Upscaler Pro – REAL 1080p", "upload": "/upload/"}
 
 if __name__ == "__main__":
     import uvicorn
