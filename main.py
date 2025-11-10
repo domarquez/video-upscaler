@@ -2,113 +2,55 @@ import os
 import shutil
 import subprocess
 import uuid
-import numpy as np
-import cv2
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-app = FastAPI(title="Video Upscaler Pro – Railway")
+app = FastAPI(title="Video Upscaler Pro – FFmpeg + Real-ESRGAN")
 
 UPLOAD_DIR = Path("/tmp/uploads")
 OUTPUT_DIR = Path("/tmp/outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-def extract_frames_ffmpeg(video_path: Path, frames_dir: Path):
-    frames_dir.mkdir(exist_ok=True)
-    cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vf", "fps=30", str(frames_dir / "frame_%08d.png")]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"Extract failed: {r.stderr}")
+def upscale_video(input_path: Path, output_path: Path):
+    # 1. Extraer audio
+    audio_path = UPLOAD_DIR / "temp_audio.aac"
+    subprocess.run([
+        "ffmpeg", "-y", "-i", str(input_path),
+        "-vn", "-c:a", "copy", str(audio_path)
+    ], check=True)
 
-def apply_effects(frame_path: Path, out_path: Path):
-    frame = cv2.imread(str(frame_path))
-    if frame is None:
-        raise RuntimeError(f"Cannot read {frame_path}")
-    if len(frame.shape) == 2:
-        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-    if frame.shape[2] == 4:
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    # 2. Upscale con Real-ESRGAN (4x)
+    temp_upscaled = UPLOAD_DIR / "temp_upscaled.mp4"
+    subprocess.run([
+        "realesrgan-ncnn-vulkan",
+        "-i", str(input_path),
+        "-o", str(temp_upscaled),
+        "-n", "realesr-animevideov3",  # modelo ligero
+        "-s", "4"  # 4x upscale
+    ], check=True)
 
-    # Blur suave
-    blurred = cv2.GaussianBlur(frame, (9, 9), 1.5)
-    blended = cv2.addWeighted(frame, 0.8, blurred, 0.2, 0)
-
-    # Denoise
-    denoised = cv2.fastNlMeansDenoisingColored(blended, None, 3, 3, 7, 15)
-
-    # Sharpen
-    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]]) * 0.05
-    sharpened = cv2.filter2D(denoised, -1, kernel)
-
-    # Upscale
-    h, w = sharpened.shape[:2]
-    if w <= 540:
-        new_w = 1920
-        new_h = int(h * 1920 / w)
-        sharpened = cv2.resize(sharpened, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-
-    # GUARDAR EN BGR (NO RGB) → COLORES CORRECTOS
-    cv2.imwrite(str(out_path), sharpened)
-
-def interpolate_frames(enhanced_dir: Path):
-    frames = sorted(enhanced_dir.glob("frame_*.jpg"))
-    if len(frames) < 2:
-        return
-    for i in range(len(frames) - 1):
-        prev = cv2.imread(str(frames[i]))
-        curr = cv2.imread(str(frames[i + 1]))
-        if prev is None or curr is None:
-            continue
-        inter = cv2.addWeighted(prev, 0.5, curr, 0.5, 0)
-        cv2.imwrite(str(enhanced_dir / f"inter_{i:04d}.jpg"), inter)
-
-def make_video(enhanced_dir: Path, out_path: Path, audio_src: Path):
-    cmd = [
+    # 3. Reemplazar audio
+    subprocess.run([
         "ffmpeg", "-y",
-        "-framerate", "30",
-        "-pattern_type", "glob",
-        "-i", f"{enhanced_dir}/*.jpg",
-        "-i", str(audio_src),
-        "-c:v", "libx264", "-crf", "18", "-preset", "medium",
-        "-pix_fmt", "yuv420p",
-        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-        "-c:a", "copy",
-        "-r", "30", "-shortest",
-        str(out_path)
-    ]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"FFmpeg failed: {r.stderr}")
+        "-i", str(temp_upscaled),
+        "-i", str(audio_path),
+        "-c:v", "copy", "-c:a", "aac",
+        "-map", "0:v:0", "-map", "1:a:0",
+        str(output_path)
+    ], check=True)
+
+    # Limpieza
+    audio_path.unlink()
+    temp_upscaled.unlink()
 
 def process_video(video_path: str, task_id: str):
     orig = Path(video_path)
-    raw_dir = UPLOAD_DIR / f"{task_id}_raw"
-    enhanced_dir = UPLOAD_DIR / f"{task_id}_enhanced"
-    enhanced_dir.mkdir(exist_ok=True)
-
-    # NOMBRE SIMPLE PARA AUDIO
-    safe_audio = UPLOAD_DIR / f"{task_id}_audio.mp4"
-    shutil.copy2(orig, safe_audio)
-
-    extract_frames_ffmpeg(safe_audio, raw_dir)
-
-    for png in sorted(raw_dir.glob("frame_*.png")):
-        jpg = enhanced_dir / png.name.replace(".png", ".jpg")
-        apply_effects(png, jpg)
-
-    interpolate_frames(enhanced_dir)
-
     output = OUTPUT_DIR / f"{task_id}_upscaled.mp4"
-    make_video(enhanced_dir, output, safe_audio)
-
-    shutil.rmtree(raw_dir)
-    shutil.rmtree(enhanced_dir)
-    safe_audio.unlink()
+    upscale_video(orig, output)
     shutil.move(orig, OUTPUT_DIR / f"{task_id}_orig.mp4")
 
-# === API ===
 @app.post("/upload/")
 async def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     if not file.filename.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm')):
@@ -135,9 +77,4 @@ def download(task_id: str):
 
 @app.get("/")
 def home():
-    return {"message": "Video Upscaler Pro – Railway", "upload": "/upload/"}
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    return {"message": "Video Upscaler Pro – Real-ESRGAN", "upload": "/upload/"}
