@@ -16,6 +16,9 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 def apply_effects(frame):
+    # Aseguramos que sea BGR antes de efectos
+    if len(frame.shape) == 2:  # Si es escala de grises
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
     blurred = cv2.GaussianBlur(frame, (21, 21), 3)
     blended = cv2.addWeighted(frame, 0.6, blurred, 0.4, 0)
     denoised = cv2.fastNlMeansDenoisingColored(blended, None, 5, 5, 7, 21)
@@ -23,43 +26,62 @@ def apply_effects(frame):
     return cv2.filter2D(denoised, -1, kernel)
 
 def process_frames(video_path: Path, frames_dir: Path):
-    cap = cv2.VideoCapture(str(video_path))
+    # FORZAR LEER EN COLOR
+    cap = cv2.VideoCapture(str(video_path), cv2.CAP_FFMPEG)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     factor = max(1, int(30 // fps))
     frame_idx = 0
 
     ret, prev = cap.read()
     if not ret:
+        cap.release()
         return 0
+
+    # FORZAR COLOR (BGR)
+    if len(prev.shape) == 2:
+        prev = cv2.cvtColor(prev, cv2.COLOR_GRAY2BGR)
+    elif prev.shape[2] == 4:
+        prev = cv2.cvtColor(prev, cv2.COLOR_BGRA2BGR)
+
     prev = apply_effects(prev)
     h, w = prev.shape[:2]
     if w <= 540:
         prev = cv2.resize(prev, (1920, int(h * 1920 / w)), interpolation=cv2.INTER_CUBIC)
-    prev = cv2.cvtColor(prev, cv2.COLOR_BGR2RGB)  # ← CORRECTO
-    cv2.imwrite(str(frames_dir / f"frame_{frame_idx:08d}.jpg"), prev)
+
+    # Guardar en RGB para FFmpeg
+    prev_rgb = cv2.cvtColor(prev, cv2.COLOR_BGR2RGB)
+    cv2.imwrite(str(frames_dir / f"frame_{frame_idx:08d}.jpg"), prev_rgb)
     frame_idx += 1
 
     while True:
         ret, curr = cap.read()
         if not ret:
             break
+
+        # FORZAR COLOR
+        if len(curr.shape) == 2:
+            curr = cv2.cvtColor(curr, cv2.COLOR_GRAY2BGR)
+        elif curr.shape[2] == 4:
+            curr = cv2.cvtColor(curr, cv2.COLOR_BGRA2BGR)
+
         curr = apply_effects(curr)
         h, w = curr.shape[:2]
         if w <= 540:
             curr = cv2.resize(curr, (1920, int(h * 1920 / w)), interpolation=cv2.INTER_CUBIC)
-        
-        # ← CORREGIDO: curr en RGB
+
         curr_rgb = cv2.cvtColor(curr, cv2.COLOR_BGR2RGB)
 
-        # Interpolación: inter también en RGB
+        # Interpolación
         for i in range(1, factor):
             alpha = i / factor
-            inter = cv2.addWeighted(prev, 1 - alpha, curr_rgb, alpha, 0)
+            inter = cv2.addWeighted(prev_rgb, 1 - alpha, curr_rgb, alpha, 0)
             cv2.imwrite(str(frames_dir / f"frame_{frame_idx:08d}.jpg"), inter)
             frame_idx += 1
 
         cv2.imwrite(str(frames_dir / f"frame_{frame_idx:08d}.jpg"), curr_rgb)
-        prev = curr_rgb  # ← prev también en RGB
+        prev_rgb = curr_rgb
         frame_idx += 1
 
     cap.release()
@@ -74,8 +96,8 @@ def make_video(frames_dir: Path, output_path: Path, audio_path: Path):
         "-c:v", "libx264",
         "-crf", "18",
         "-preset", "medium",
-        "-pix_fmt", "yuv420p",  # ← CLAVE: COMPATIBILIDAD TOTAL
-        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",  # ← Evita error de tamaño impar
+        "-pix_fmt", "yuv420p",
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-c:a", "aac",
         "-b:a", "128k",
         "-r", "30",
@@ -84,8 +106,7 @@ def make_video(frames_dir: Path, output_path: Path, audio_path: Path):
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print("FFmpeg error:", result.stderr)
-        raise RuntimeError(f"FFmpeg failed: {result.stderr}")
+        raise RuntimeError(f"FFmpeg error: {result.stderr}")
 
 def process_video(video_path: str, task_id: str):
     orig = Path(video_path)
@@ -100,7 +121,7 @@ def process_video(video_path: str, task_id: str):
 @app.post("/upload/")
 async def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     if not file.filename.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
-        return {"error": "Solo videos (mp4, mov, avi, mkv)"}
+        return {"error": "Solo videos"}
     task_id = str(uuid.uuid4())
     path = UPLOAD_DIR / f"{task_id}_{file.filename}"
     with open(path, "wb") as f:
@@ -119,7 +140,7 @@ def download(task_id: str):
     file = OUTPUT_DIR / f"{task_id}_upscaled.mp4"
     if file.exists():
         return FileResponse(file, media_type="video/mp4", filename=f"upscaled_{task_id}.mp4")
-    return {"error": "No listo aún"}
+    return {"error": "No listo"}
 
 @app.get("/")
 def home():
