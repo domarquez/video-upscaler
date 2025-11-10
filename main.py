@@ -16,9 +16,6 @@ OUTPUT_DIR = Path("/tmp/outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# -------------------------------------------------
-# 1. Extraer frames con FFmpeg
-# -------------------------------------------------
 def extract_frames_ffmpeg(video_path: Path, frames_dir: Path):
     frames_dir.mkdir(exist_ok=True)
     cmd = [
@@ -31,9 +28,6 @@ def extract_frames_ffmpeg(video_path: Path, frames_dir: Path):
     if r.returncode != 0:
         raise RuntimeError(f"FFmpeg extract failed: {r.stderr}")
 
-# -------------------------------------------------
-# 2. Upscale + efectos (blur suave)
-# -------------------------------------------------
 def apply_effects(frame_path: Path, out_path: Path):
     frame = cv2.imread(str(frame_path))
     if frame is None:
@@ -44,30 +38,23 @@ def apply_effects(frame_path: Path, out_path: Path):
     if frame.shape[2] == 4:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
-    # Blur suave
     blurred = cv2.GaussianBlur(frame, (9, 9), 1.5)
     blended = cv2.addWeighted(frame, 0.8, blurred, 0.2, 0)
 
-    # Denoise
     denoised = cv2.fastNlMeansDenoisingColored(blended, None, 3, 3, 7, 15)
 
-    # Sharpen
     kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]]) * 0.05
     sharpened = cv2.filter2D(denoised, -1, kernel)
 
-    # Upscale
     h, w = sharpened.shape[:2]
     if w <= 540:
         new_w = 1920
         new_h = int(h * 1920 / w)
         sharpened = cv2.resize(sharpened, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
 
-    # GUARDAR EN BGR (NO RGB) ← CLAVE
+    # GUARDAR EN BGR (NO RGB) – EVITA NEGRO
     cv2.imwrite(str(out_path), sharpened)
 
-# -------------------------------------------------
-# 3. Interpolación
-# -------------------------------------------------
 def interpolate_frames(enhanced_dir: Path):
     frames = sorted(enhanced_dir.glob("frame_*.jpg"))
     if len(frames) < 2:
@@ -80,9 +67,6 @@ def interpolate_frames(enhanced_dir: Path):
         inter = cv2.addWeighted(prev, 0.5, curr, 0.5, 0)
         cv2.imwrite(str(enhanced_dir / f"inter_{i:04d}.jpg"), inter)
 
-# -------------------------------------------------
-# 4. Recombinar
-# -------------------------------------------------
 def make_video(enhanced_dir: Path, out_path: Path, audio_src: Path):
     cmd = [
         "ffmpeg", "-y",
@@ -91,7 +75,7 @@ def make_video(enhanced_dir: Path, out_path: Path, audio_src: Path):
         "-i", f"{enhanced_dir}/*.jpg",
         "-i", str(audio_src),
         "-c:v", "libx264", "-crf", "18", "-preset", "medium",
-        "-pix_fmt", "yuv420948p",
+        "-pix_fmt", "yuv420p",  # ← FIJO: yuv420p (NO yuv420p48p)
         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-c:a", "copy",
         "-r", "30", "-shortest",
@@ -101,9 +85,6 @@ def make_video(enhanced_dir: Path, out_path: Path, audio_src: Path):
     if r.returncode != 0:
         raise RuntimeError(f"FFmpeg failed: {r.stderr}")
 
-# -------------------------------------------------
-# 5. Proceso
-# -------------------------------------------------
 def process_video(video_path: str, task_id: str):
     orig = Path(video_path)
     raw_dir = UPLOAD_DIR / f"{task_id}_raw"
@@ -125,9 +106,6 @@ def process_video(video_path: str, task_id: str):
     shutil.rmtree(enhanced_dir)
     shutil.move(orig, OUTPUT_DIR / f"{task_id}_orig.mp4")
 
-# -------------------------------------------------
-# API
-# -------------------------------------------------
 @app.post("/upload/")
 async def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     if not file.filename.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm')):
