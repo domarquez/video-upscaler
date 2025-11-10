@@ -1,2 +1,6 @@
-[phases.build]
-nixPkgs = ['python311', 'ffmpeg']
+[phases.setup]
+aptPkgs = ["ffmpeg"]  # Instala FFmpeg sin conflictos
+
+# Opcional: Fuerza Python 3.11 (si tus deps lo necesitan)
+[providers.python]
+version = "3.11"
