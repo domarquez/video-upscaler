@@ -1,7 +1,4 @@
 [phases.setup]
 aptPkgs = ["ffmpeg"]
 
-providers = ["python"]
-
-[providers.python]
-version = "3.11"
+providers = ["python@3.11"]
