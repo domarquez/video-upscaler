@@ -2,8 +2,8 @@ app = "video-upscaler"  # Tu nombre actual
 primary_region = "ord"
 
 [build]
-  # Cambia esto: usa un builder ligero para Python
-  builder = "heroku/buildpack:python"  # En lugar de "paketobuildpacks/builder:base"
+  # CAMBIO CLAVE: Usa builder de Heroku (ligero, 1 core)
+  builder = "heroku/buildpack:python"
 
 [http_service]
   internal_port = 8080
@@ -14,5 +14,5 @@ primary_region = "ord"
 
 [[vm]]
   cpu_kind = "shared"
-  cpus = 1  # Asegúrate de que sea 1 (no más)
+  cpus = 1  # Explícito: solo 1 core
   memory_mb = 256
