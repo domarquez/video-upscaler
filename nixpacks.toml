@@ -1,2 +1,2 @@
 [phases.build]
-nixPkgs = []  # Vacío: no instala FFmpeg en build (lo agregamos después)
+nixPkgs = ['python311', 'ffmpeg']
