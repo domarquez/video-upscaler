@@ -1,7 +1,7 @@
-# Instala FFmpeg con apt (evita conflicto con Python)
 [phases.setup]
 aptPkgs = ["ffmpeg"]
 
-# Fuerza Python 3.11 (opcional, pero recomendado)
-[providers]
-python = "3.11"
+providers = ["python"]
+
+[providers.python]
+version = "3.11"
