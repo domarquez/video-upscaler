@@ -6,49 +6,31 @@ from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-app = FastAPI(title="Video Upscaler Pro – FFmpeg + Real-ESRGAN")
+app = FastAPI(title="Video Upscaler Pro – FFmpeg Simple")
 
 UPLOAD_DIR = Path("/tmp/uploads")
 OUTPUT_DIR = Path("/tmp/outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-def upscale_video(input_path: Path, output_path: Path):
-    # 1. Extraer audio
-    audio_path = UPLOAD_DIR / "temp_audio.aac"
-    subprocess.run([
-        "ffmpeg", "-y", "-i", str(input_path),
-        "-vn", "-c:a", "copy", str(audio_path)
-    ], check=True)
-
-    # 2. Upscale con Real-ESRGAN (4x)
-    temp_upscaled = UPLOAD_DIR / "temp_upscaled.mp4"
-    subprocess.run([
-        "realesrgan-ncnn-vulkan",
-        "-i", str(input_path),
-        "-o", str(temp_upscaled),
-        "-n", "realesr-animevideov3",  # modelo ligero
-        "-s", "4"  # 4x upscale
-    ], check=True)
-
-    # 3. Reemplazar audio
-    subprocess.run([
+def upscale_with_ffmpeg(input_path: Path, output_path: Path):
+    cmd = [
         "ffmpeg", "-y",
-        "-i", str(temp_upscaled),
-        "-i", str(audio_path),
-        "-c:v", "copy", "-c:a", "aac",
-        "-map", "0:v:0", "-map", "1:a:0",
+        "-i", str(input_path),
+        "-vf", "scale=1920:1080:flags=lanczos,boxblur=2:2,fps=30",  # Upscale + blur + 30 FPS
+        "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+        "-c:a", "aac", "-b:a", "128k",
+        "-pix_fmt", "yuv420p",
         str(output_path)
-    ], check=True)
-
-    # Limpieza
-    audio_path.unlink()
-    temp_upscaled.unlink()
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"FFmpeg failed: {r.stderr}")
 
 def process_video(video_path: str, task_id: str):
     orig = Path(video_path)
     output = OUTPUT_DIR / f"{task_id}_upscaled.mp4"
-    upscale_video(orig, output)
+    upscale_with_ffmpeg(orig, output)
     shutil.move(orig, OUTPUT_DIR / f"{task_id}_orig.mp4")
 
 @app.post("/upload/")
@@ -77,4 +59,9 @@ def download(task_id: str):
 
 @app.get("/")
 def home():
-    return {"message": "Video Upscaler Pro – Real-ESRGAN", "upload": "/upload/"}
+    return {"message": "Video Upscaler Pro – FFmpeg", "upload": "/upload/"}
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
