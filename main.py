@@ -3,10 +3,10 @@ import shutil
 import subprocess
 import uuid
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pathlib import Path
 
-app = FastAPI(title="Video Upscaler Pro – FFmpeg (1080p + Proporción + SIN AUDIO)")
+app = FastAPI(title="Video Upscaler Pro – FFmpeg (Fix Download)")
 
 UPLOAD_DIR = Path("/tmp/uploads")
 OUTPUT_DIR = Path("/tmp/outputs")
@@ -17,7 +17,6 @@ def upscale_with_ffmpeg(input_path: Path, output_path: Path):
     cmd = [
         "ffmpeg", "-y",
         "-i", str(input_path),
-        "-an",  # ← REMUEVE TODO EL AUDIO
         "-vf", (
             "scale='if(gt(iw,ih),-2,1920)':'if(gt(iw,ih),1080,-2)':flags=lanczos,"
             "unsharp=9:9:1.5:7:7:1.0,"
@@ -28,6 +27,7 @@ def upscale_with_ffmpeg(input_path: Path, output_path: Path):
         "-c:v", "libx264",
         "-crf", "12",
         "-preset", "veryslow",
+        "-c:a", "aac", "-b:a", "256k",
         "-pix_fmt", "yuv420p",
         str(output_path)
     ]
@@ -60,14 +60,23 @@ def status(task_id: str):
 
 @app.get("/download/{task_id}")
 def download(task_id: str):
-    file = OUTPUT_DIR / f"{task_id}_upscaled.mp4"
-    if file.exists():
-        return FileResponse(file, media_type="video/mp4", filename=f"upscaled_{task_id}.mp4")
+    file_path = OUTPUT_DIR / f"{task_id}_upscaled.mp4"
+    if file_path.exists():
+        file_size = os.path.getsize(file_path)
+        headers = {
+            "Content-Disposition": f"attachment; filename=upscaled_{task_id}.mp4",
+            "Content-Length": str(file_size)
+        }
+        return FileResponse(
+            file_path,
+            media_type="video/mp4",
+            headers=headers
+        )
     return {"error": "No listo"}
 
 @app.get("/")
 def home():
-    return {"message": "Video Upscaler Pro – 1080p + Proporción + SIN AUDIO", "upload": "/upload/"}
+    return {"message": "Video Upscaler Pro – FFmpeg (Fix Download)", "upload": "/upload/"}
 
 if __name__ == "__main__":
     import uvicorn
