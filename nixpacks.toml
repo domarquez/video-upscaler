@@ -1,11 +1,2 @@
 [phases.setup]
-aptPkgs = ["ffmpeg", "wget", "unzip"]
-
-[phases.build]
-cmds = [
-  "wget https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip",
-  "unzip realesrgan-ncnn-vulkan-20220424-ubuntu.zip",
-  "mv realesrgan-ncnn-vulkan/realesrgan-ncnn-vulkan /usr/local/bin/",
-  "chmod +x /usr/local/bin/realesrgan-ncnn-vulkan",
-  "rm -rf realesrgan-ncnn-vulkan realesrgan-ncnn-vulkan-20220424-ubuntu.zip"
-]
+aptPkgs = ["ffmpeg"]
